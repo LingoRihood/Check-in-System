@@ -1,0 +1,14 @@
+
+# CLI tool, only in development environment.
+# https://goframe.org/docs/cli
+gfcli:
+  gen:
+    dao:
+      - link: "mysql:gf:GfPass!123@tcp(127.0.0.1:3306)/demo?charset=utf8mb4&parseTime=true&loc=Local"
+        descriptionTag: true
+        tables: "userinfo"
+
+  docker:
+    build: "-a amd64 -s linux -p temp -ew"
+    tagPrefixes:
+      - my.image.pub/my-app

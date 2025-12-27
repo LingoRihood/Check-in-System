@@ -1,0 +1,8 @@
+2025-12-20T09:19:28 [INFO] {6bbcbf55b1c7821873d3080758fc6e1f} Hello Simon
+2025-12-20T09:19:28 [DEBU] {6bbcbf55b1c7821873d3080758fc6e1f} Debug Log
+2025-12-20T09:31:06 [INFO] {97f05cfc53c88218e3026f226e1f0ee5} Hello Simon
+2025-12-20T09:31:06 [DEBU] {97f05cfc53c88218e3026f226e1f0ee5} Debug Log
+2025-12-20T09:31:06 [DEBU] {97f05cfc53c88218e3026f226e1f0ee5} {"name":"john","uid":100}
+{"time":"2025-12-20T09:58:51","level":"INFO","content":"Hello Simon"}
+{"time":"2025-12-20T09:58:51","level":"DEBU","content":"Debug Log"}
+{"time":"2025-12-20T09:58:51","level":"DEBU","content":"{\"name\":\"john\",\"uid\":100}"}
