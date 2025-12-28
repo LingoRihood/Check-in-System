@@ -13,6 +13,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
+        // 要和后端的端口对应上
         target: 'http://localhost:8000',
         changeOrigin: true,
         secure: false

@@ -53,7 +53,7 @@
 
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center gap-2 min-w-0">
-                    <p class="text-white font-semibold leading-tight truncate">
+                    <p class="text-white font-semibold leading-tight truncate tencent-font">
                       {{ auth.user?.username || '-' }}
                     </p>
 
@@ -139,6 +139,36 @@
         />
       </div>
 
+      <!-- ✅ 连续签到奖励（新增：在日历和规则之间） -->
+      <div class="mt-4 rounded-3xl bg-amber-50/80 border border-amber-200 shadow-sm p-4">
+        <div class="flex items-center justify-center gap-2">
+          <i class="fa-solid fa-gift text-amber-600"></i>
+          <p class="text-sm font-semibold text-slate-900">连续签到奖励</p>
+        </div>
+
+        <p class="mt-1 text-xs text-slate-500 text-center">
+          当前连签 <span class="font-semibold tabular-nums text-slate-900">{{ points.streakDays }}</span> 天
+        </p>
+
+        <div class="mt-3 grid grid-cols-4 gap-2">
+          <div
+            v-for="it in rewardCards"
+            :key="it.key"
+            class="rounded-2xl border bg-white px-3 py-3 text-center"
+            :class="it.reached ? 'border-amber-300 shadow-sm' : 'border-amber-200/60 opacity-80'"
+          >
+            <div class="text-lg leading-none">{{ it.emoji }}</div>
+            <p class="mt-1 text-sm font-medium text-slate-900">{{ it.title }}</p>
+            <p class="mt-1 font-semibold text-amber-600 tabular-nums">+{{ it.bonus }}</p>
+
+            <!-- 你的 pointsStore 是“达成即自动发放”，所以这里用：已发放 / 未达成 -->
+            <p class="mt-1 text-[11px]" :class="it.awarded ? 'text-emerald-600' : 'text-slate-400'">
+              {{ it.awarded ? '已发放' : '未达成' }}
+            </p>
+          </div>
+        </div>
+      </div>
+
       <!-- Rules -->
       <div class="mt-4 rounded-3xl bg-white border border-slate-200 shadow-sm p-4">
         <div class="flex items-start gap-3">
@@ -173,7 +203,9 @@
     </div>
 
     <!-- Bottom CTA -->
-    <div class="fixed inset-x-0 bottom-0 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-3 bg-gradient-to-t from-slate-50 via-slate-50 to-slate-50/0">
+    <div
+      class="fixed inset-x-0 bottom-0 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-3 bg-gradient-to-t from-slate-50 via-slate-50 to-slate-50/0"
+    >
       <div class="mx-auto max-w-md px-4">
         <div class="rounded-3xl bg-white border border-slate-200 shadow-sm p-3 flex items-center gap-3">
           <div class="h-11 w-11 rounded-2xl bg-slate-900 text-white flex items-center justify-center shrink-0">
@@ -233,6 +265,30 @@ const avatarUrl = computed(() => {
     auth.user?.avatar ||
     'https://images.unsplash.com/photo-1520975693411-7a2b0d5441f4?auto=format&fit=crop&w=200&q=70'
   )
+})
+
+/** ✅ 连续签到奖励展示（新增） */
+const currentMonthState = computed(() => {
+  // 这里会确保当月 state 存在（points.getMonthState 内部会 ensureMonth）
+  return points.getMonthState(points.currentMonthKey)
+})
+
+const fullMonthReached = computed(() => {
+  const m: any = currentMonthState.value
+  if (!m?.days) return false
+  return Object.values(m.days).every((d: any) => d?.signed)
+})
+
+const rewardCards = computed(() => {
+  const m: any = currentMonthState.value
+  const awarded = m?.bonusAwarded || {}
+
+  return [
+    { key: '3', title: '连续3天', bonus: 5, emoji: '🔥', reached: points.streakDays >= 3, awarded: !!awarded['3'] },
+    { key: '7', title: '连续7天', bonus: 10, emoji: '⭐', reached: points.streakDays >= 7, awarded: !!awarded['7'] },
+    { key: '15', title: '连续15天', bonus: 20, emoji: '💎', reached: points.streakDays >= 15, awarded: !!awarded['15'] },
+    { key: 'full', title: '月满签', bonus: 100, emoji: '👑', reached: fullMonthReached.value, awarded: !!awarded.full }
+  ]
 })
 
 function monthKey(y: number, monthIndex: number) {

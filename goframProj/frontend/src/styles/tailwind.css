@@ -1,3 +1,15 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@font-face {
+  font-family: "TencentSans";
+  src: url("../assets/fonts/TencentSans/TencentSans-W7.woff") format("woff");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+.tencent-font {
+  font-family: "TencentSans", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
