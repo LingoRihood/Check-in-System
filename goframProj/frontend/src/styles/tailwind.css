@@ -13,3 +13,107 @@
 .tencent-font {
   font-family: "TencentSans", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
 }
+
+/* =========================
+   Global cursor override
+   防止出现 grab / pointer 小手
+   ========================= */
+
+/* 默认都用箭头 */
+* {
+  cursor: default !important;
+}
+
+/* 可编辑区域用文本光标 */
+input,
+textarea,
+[contenteditable="true"] {
+  cursor: text !important;
+}
+
+/* 按钮/链接也不要小手（如果你连按钮也不想显示手型） */
+a,
+button,
+[role="button"],
+[role="link"],
+label {
+  cursor: default !important;
+}
+
+/* 禁止抓手 */
+*[style*="grab"],
+*[class*="grab"] {
+  cursor: default !important;
+}
+
+/* 取消输入框聚焦时的背景高亮（Vant Field） */
+.van-field__control input:focus,
+.van-field__control textarea:focus {
+  background: transparent !important; /* 或者 white */
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* 有些浏览器会给 input 自动加蓝色高亮，统一清掉 */
+input:focus,
+textarea:focus {
+  background: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* ===== 取消 Chrome 自动填充（autofill）高亮底色 ===== */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus {
+  -webkit-text-fill-color: inherit !important;
+  caret-color: inherit !important;
+
+  /* ✅ 两行保持一致：都用 #fff 覆盖掉浏览器 autofill 的底色 */
+  -webkit-box-shadow: 0 0 0px 1000px #fff inset !important;
+  box-shadow: 0 0 0px 1000px #fff inset !important;
+
+  /* 避免闪一下蓝色 */
+  transition: background-color 999999s ease-out 0s !important;
+}
+
+/* =========================
+   输入框文字统一 16px（不改字体、不改字重）
+   ========================= */
+
+.van-field__control {
+  font-size: 16px !important;
+  line-height: 24px !important;
+}
+
+.van-field__control input,
+.van-field__control textarea {
+  font-size: 16px !important;
+  line-height: 24px !important;
+}
+
+.van-field__control input::placeholder,
+.van-field__control textarea::placeholder {
+  font-size: 16px !important;
+  line-height: 24px !important;
+}
+
+/* autofill 文字大小也统一 16（不改字体、不改字重） */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus {
+  font-size: 16px !important;
+  -webkit-text-size-adjust: 100% !important;
+}

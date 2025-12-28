@@ -8,7 +8,18 @@ import './styles/tailwind.css'
 import 'vant/lib/index.css'
 import '@fortawesome/fontawesome-free/css/all.min.css'
 
-import { Button, Field, Tabs, Tab, Popup, List, PullRefresh, Divider, Image as VanImage } from 'vant'
+import {
+  Button,
+  Field,
+  Tabs,
+  Tab,
+  Popup,
+  List,
+  PullRefresh,
+  Divider,
+  Image as VanImage,
+  Icon, // ✅ 新增
+} from 'vant'
 
 const app = createApp(App)
 
@@ -24,5 +35,6 @@ app.use(List)
 app.use(PullRefresh)
 app.use(Divider)
 app.use(VanImage)
+app.use(Icon) // ✅ 新增：注册 Icon，van-icon 才能显示
 
 app.mount('#app')

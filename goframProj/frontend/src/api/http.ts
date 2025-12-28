@@ -1,4 +1,4 @@
-import axios, { AxiosError, type AxiosInstance } from 'axios'
+import axios, { AxiosError, type AxiosInstance, type AxiosResponse } from 'axios'
 import { loadAuth, saveAuth, clearAuth } from '@/utils/storage'
 
 const baseURL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
@@ -25,8 +25,30 @@ function resolvePending(token: string | null) {
   pending = []
 }
 
+/** ✅ GoFrame 默认响应结构：{ code, message, data } */
+function isGFResp(x: any): x is { code: number; message: string; data: any } {
+  return (
+    x &&
+    typeof x === 'object' &&
+    typeof x.code === 'number' &&
+    typeof x.message === 'string' &&
+    'data' in x
+  )
+}
+
 http.interceptors.response.use(
-  (res) => res,
+  (res: AxiosResponse) => {
+    // ✅ 关键：HTTP 200 也可能是业务失败，需要用 code 判断
+    const payload = res.data
+    if (isGFResp(payload) && payload.code !== 0) {
+      const err: any = new Error(payload.message || '请求失败')
+      // 让上层还能用 e.response.data.message 取到后端提示
+      err.response = { ...res, data: payload }
+      err.gfCode = payload.code
+      throw err
+    }
+    return res
+  },
   async (err: AxiosError) => {
     const status = err.response?.status
     const original = err.config as any
@@ -57,7 +79,10 @@ http.interceptors.response.use(
           { refreshToken: auth.refreshToken },
           { timeout: 15000 }
         )
-        const data = (resp.data as any)?.data ?? resp.data
+
+        // 刷新接口也可能是 GoFrame 包装
+        const payload = resp.data as any
+        const data = (payload?.data ?? payload) as any
         const newAccess = data?.accessToken
         const newRefresh = data?.refreshToken
 

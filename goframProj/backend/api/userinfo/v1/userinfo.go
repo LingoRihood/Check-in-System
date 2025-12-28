@@ -23,8 +23,8 @@ type CreateRes struct {
 
 type LoginReq struct {
 	g.Meta   `path:"/auth/login" method:"post" tags:"用户模块" sm:"登录"`
-	Username string `p:"username" v:"required|length:3,20" dc:"用户名"`
-	Password string `p:"password" v:"required|length:6,20" dc:"密码"`
+	Username string `p:"username" v:"required#用户名不能为空|length:3,20#用户名长度需为3-20位" dc:"用户名"`
+	Password string `p:"password" v:"required#密码不能为空|length:6,20#密码长度需为6-20位" dc:"密码"`
 }
 
 type LoginRes struct {
