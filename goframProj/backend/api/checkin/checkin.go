@@ -12,4 +12,5 @@ import (
 
 type ICheckinV1 interface {
 	Daily(ctx context.Context, req *v1.DailyReq) (res *v1.DailyRes, err error)
+	Calendar(ctx context.Context, req *v1.CalendarReq) (res *v1.CalendarRes, err error)
 }

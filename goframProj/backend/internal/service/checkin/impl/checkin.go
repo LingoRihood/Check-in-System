@@ -20,9 +20,10 @@ import (
 // 签到相关业务逻辑的具体实现
 
 const (
-	yearSignKeyFormat         = "user:checkins:daily:%d:%d"     // user:checkins:daily:12131321421312:2025
-	monthRetroKeyFormat       = "user:checkins:retro:%d:%d%02d" // user:checkins:retro:12131321421231202501
-	defaultDailyPoints  int64 = 1                               // 每日签到积分（注意：用 int64，和积分字段统一）
+	yearSignKeyFormat           = "user:checkins:daily:%d:%d"     // user:checkins:daily:12131321421312:2025
+	monthRetroKeyFormat         = "user:checkins:retro:%d:%d%02d" // user:checkins:retro:12131321421231202501
+	defaultDailyPoints    int64 = 1                               // 每日签到积分（注意：用 int64，和积分字段统一）
+	maxRetroTimesPerMonth       = 3                               // 单月最多补签次数
 )
 
 type PointsTransactionType int
@@ -356,41 +357,12 @@ func (s *Service) updateConsecutiveBonus(ctx context.Context, userId uint64, yea
 
 // CalcMonthConsecutiveDays 计算本月最大连续签到天数（含补签）
 func (s *Service) CalcMonthConsecutiveDays(ctx context.Context, userId uint64, year, month int) (int, error) {
-	// 从用户年度签到记录中取出当月签到 bitmap
-	key := fmt.Sprintf(yearSignKeyFormat, userId, year)
-	firstOfMonthOffset := getFirstOfMonthOffset(year, month)
 	monthDays := getMonthDays(year, month)
-	bitWidthType := fmt.Sprintf("u%d", monthDays) // u30/u31
-
-	values, err := s.rc.BitField(ctx, key, "GET", bitWidthType, firstOfMonthOffset).Result()
+	checkinBitmap, retroBitmap, err := s.getMonthBitmap(ctx, userId, year, month)
 	if err != nil {
-		g.Log().Errorf(ctx, "获取用户签到记录到失败: %v", err)
+		g.Log().Errorf(ctx, "获取用户签到记录失败: %v", err)
 		return 0, err
 	}
-
-	if len(values) == 0 {
-		values = []int64{0} // 如果没有查询到，则默认为0
-	}
-
-	checkinBitmap := uint64(values[0])
-	g.Log().Debugf(ctx, "checkinBitmap: %0b", checkinBitmap)
-
-	// 获取当月补签 bitmap
-	retroKey := fmt.Sprintf(monthRetroKeyFormat, userId, year, month)
-
-	// 去 Redis 里 retroKey 这个补签位图，从第 0 位开始，读出 monthDays（比如 30/31）个 bit，打包成一个整数返回
-	retroValues, err := s.rc.BitField(ctx, retroKey, "GET", bitWidthType, "#0").Result()
-	if err != nil {
-		g.Log().Errorf(ctx, "获取用户补签记录失败: %v", err)
-		return 0, err
-	}
-
-	if len(retroValues) == 0 {
-		retroValues = []int64{0} // 没有查询到，则默认为0
-	}
-
-	retroBitmap := uint64(retroValues[0])
-
 	// 逻辑或
 	bitmap := checkinBitmap | retroBitmap // 合并本月签到和补签数据
 
@@ -402,7 +374,7 @@ func calcMaxConsecutiveDays(bitmap uint64, monthDays int) int {
 	// 逐位判断，计算出连续签到天数
 	maxCount := 0
 	currCount := 0
-	for i := range monthDays {
+	for i := 0; i < monthDays; i++ {
 		// 从右向左逐位判断
 		checked := (bitmap>>i)&1 == 1
 		if checked {
@@ -528,4 +500,108 @@ func (s *Service) AddPoints(ctx context.Context, input *model.PointsTransactionI
 
 		return nil
 	})
+}
+
+// MonthDetail 签到详情
+func (s *Service) MonthDetail(ctx context.Context, input *model.MonthDetailInput) (*model.MonthDetailOutput, error) {
+	// 1. 从redis中分别取出签到bitmap和补签bitmap,分别得到签到日期和补签日期
+	checkinBitmap, retroBitmap, err := s.getMonthBitmap(ctx, input.UserId, input.Year, input.Month)
+	if err != nil {
+		g.Log().Errorf(ctx, "获取年月bitmap失败: %v", err)
+		return nil, err
+	}
+
+	g.Log().Debugf(ctx, "--> checkinBitmap: %031b retroBitmap:%031b", checkinBitmap, retroBitmap)
+	monthDays := getMonthDays(input.Year, input.Month) // 当月天数
+	checkinDays := parseBitmap2Days(checkinBitmap, monthDays)
+	retroDays := parseBitmap2Days(retroBitmap, monthDays)
+
+	// 2. 计算连续签到天数
+	bitmap := checkinBitmap | retroBitmap
+	maxConsecutive := calcMaxConsecutiveDays(bitmap, monthDays)
+
+	// 3. 计算剩余补签次数
+	remainRetroTimes := maxRetroTimesPerMonth - len(retroDays) // 用月度补签次数减去已补签天数
+
+	// 4. 计算当天是否签到
+	isCheckedToday, err := s.IsCheckedToday(ctx, input.UserId)
+	if err != nil {
+		g.Log().Errorf(ctx, "查询当天是否签到失败: %v", err)
+		return nil, err
+	}
+
+	return &model.MonthDetailOutput{
+		CheckedInDays:      checkinDays,
+		RetroCheckedInDays: retroDays,
+		ConsecutiveDays:    maxConsecutive,
+		RemainRetroTimes:   remainRetroTimes,
+		IsCheckedInToday:   isCheckedToday,
+	}, nil
+}
+
+func (s *Service) IsCheckedToday(ctx context.Context, userId uint64) (bool, error) {
+	// 计算今天的年度索引，然后使用 getbit 判断这一天是否签到
+	now := time.Now()
+	year := now.Year()
+	key := fmt.Sprintf(yearSignKeyFormat, userId, year)
+
+	// 算出“今天是今年第几天”对应的 bit 下标
+	dayOffset := now.YearDay() - 1
+	value, err := s.rc.GetBit(ctx, key, int64(dayOffset)).Result()
+	if err != nil {
+		g.Log().Errorf(ctx, "GetBit 获取当天签到状态失败: %v", err)
+		return false, err
+	}
+	return value == 1, nil
+}
+
+// parseBitmap2Days 根据当月的天数和bitmap, 输出对应的签到/补签日期
+func parseBitmap2Days(bitmap uint64, monthDays int) []int {
+	days := make([]int, 0)
+	for i := 0; i < monthDays; i++ {
+		// 0000000000000000000000000000110
+		if (bitmap & (1 << (monthDays - 1 - i))) != 0 {
+			days = append(days, i+1)
+		}
+	}
+	return days
+}
+
+// getMonthBitmap 获取当月 签到bitmap 和 补签的bitmap
+func (s *Service) getMonthBitmap(ctx context.Context, userId uint64, year, month int) (uint64, uint64, error) {
+	// 从用户年度签到记录中取出当月签到 bitmap
+	key := fmt.Sprintf(yearSignKeyFormat, userId, year)
+	firstOfMonthOffset := getFirstOfMonthOffset(year, month)
+	monthDays := getMonthDays(year, month)
+	bitWidthType := fmt.Sprintf("u%d", monthDays) // u30/u31
+
+	values, err := s.rc.BitField(ctx, key, "GET", bitWidthType, firstOfMonthOffset).Result()
+	if err != nil {
+		g.Log().Errorf(ctx, "获取用户签到记录到失败: %v", err)
+		return 0, 0, err
+	}
+
+	if len(values) == 0 {
+		values = []int64{0} // 如果没有查询到，则默认为0
+	}
+
+	checkinBitmap := uint64(values[0])
+	g.Log().Debugf(ctx, "checkinBitmap: %0b", checkinBitmap)
+
+	// 获取当月补签 bitmap
+	retroKey := fmt.Sprintf(monthRetroKeyFormat, userId, year, month)
+
+	// 去 Redis 里 retroKey 这个补签位图，从第 0 位开始，读出 monthDays（比如 30/31）个 bit，打包成一个整数返回
+	retroValues, err := s.rc.BitField(ctx, retroKey, "GET", bitWidthType, "#0").Result()
+	if err != nil {
+		g.Log().Errorf(ctx, "获取用户补签记录失败: %v", err)
+		return 0, 0, err
+	}
+
+	if len(retroValues) == 0 {
+		retroValues = []int64{0} // 没有查询到，则默认为0
+	}
+
+	retroBitmap := uint64(retroValues[0])
+	return checkinBitmap, retroBitmap, nil
 }
