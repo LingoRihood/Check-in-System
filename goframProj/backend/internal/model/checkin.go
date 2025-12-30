@@ -1,7 +1,6 @@
 package model
 
 // 签到相关参数
-
 type MonthDetailInput struct {
 	UserId uint64
 	Year   int // 年份
