@@ -7,6 +7,7 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/os/gcmd"
 
+	"backend/internal/controller/checkin"
 	"backend/internal/controller/hello"
 	"backend/internal/controller/userinfo"
 	"backend/internal/logic/middleware"
@@ -45,6 +46,7 @@ var (
 				group.Bind(
 					hello.NewV1(),
 					// userinfo.NewV1(), // 用户模块相关接口
+					checkin.NewV1(),
 				)
 			})
 			s.Run()

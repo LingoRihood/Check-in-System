@@ -36,6 +36,7 @@ func SetupDefaultInjector(ctx context.Context) *do.Injector {
 		// 注入服务对象
 		// TODO: 注入服务对象
 		injectSnowflake(ctx, injector)
+		injectRedis(ctx, injector)	// 注入redis client
 
 		// injectMongo(ctx, injector)
 		// injectRedis(ctx, injector)

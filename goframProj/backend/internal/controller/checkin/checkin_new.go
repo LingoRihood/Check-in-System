@@ -6,10 +6,16 @@ package checkin
 
 import (
 	"backend/api/checkin"
+	srvCheckin "backend/internal/service/checkin"
+	"backend/internal/service/checkin/impl"
 )
 
-type ControllerV1 struct{}
+type ControllerV1 struct {
+	svc srvCheckin.Service
+}
 
 func NewV1() checkin.ICheckinV1 {
-	return &ControllerV1{}
+	return &ControllerV1{
+		svc: impl.NewService(),
+	}
 }

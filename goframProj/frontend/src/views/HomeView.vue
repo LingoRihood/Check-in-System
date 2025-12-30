@@ -222,10 +222,10 @@
           <button
             class="h-11 px-4 rounded-2xl font-semibold active:scale-[0.99] disabled:bg-slate-200 disabled:text-slate-500"
             :class="isTodaySigned ? 'bg-slate-200 text-slate-500' : 'bg-slate-900 text-white'"
-            :disabled="isTodaySigned"
+            :disabled="isTodaySigned || points.checkinLoading"
             @click="points.checkinToday()"
           >
-            {{ isTodaySigned ? '已签到' : '立即签到' }}
+            {{ points.checkinLoading ? '签到中...' : (isTodaySigned ? '已签到' : '立即签到') }}
           </button>
         </div>
       </div>

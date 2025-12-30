@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import dayjs from 'dayjs'
 import { showFailToast, showSuccessToast } from 'vant'
+import { apiCheckinDaily } from '@/api/checkin'
 import {
   clearUserPoints,
   loadUserPoints,
@@ -51,7 +52,8 @@ function sumPoints(records: PointsRecord[]) {
 export const usePointsStore = defineStore('points', {
   state: () => ({
     username: '' as string,
-    data: null as UserPointsState | null
+    data: null as UserPointsState | null,
+    checkinLoading: false as boolean
   }),
 
   getters: {
@@ -136,15 +138,41 @@ export const usePointsStore = defineStore('points', {
       return !!m.days[d.date()]?.signed
     },
 
-    checkinToday() {
+    async checkinToday() {
       if (!this.data) return
+      if (this.checkinLoading) return
+
       const d = dayjs()
       const mk = monthKey(d)
       const m = ensureMonth(this.data, mk, d)
       const day = d.date()
 
-      if (m.days[day].signed) {
-        showFailToast('今天已签到')
+      // 先走后端：真正执行“签到 + 发积分”
+      this.checkinLoading = true
+      try {
+        await apiCheckinDaily()
+      } catch (e: any) {
+        // 如果后端说“今日已签到”，把本地状态也同步成已签到（但不重复加分）
+        const backendMsg =
+          e?.response?.data?.message || e?.response?.data?.msg || e?.message || ''
+
+        if (typeof backendMsg === 'string' && backendMsg.includes('已签到')) {
+          if (!m.days[day]?.signed) {
+            m.days[day] = { signed: true }
+            this.persist()
+          }
+        }
+
+        showFailToast(backendMsg || '签到失败')
+        return
+      } finally {
+        this.checkinLoading = false
+      }
+
+      // 后端成功后，再更新本地展示（用于日历/明细/动画）
+      if (m.days[day]?.signed) {
+        // 兜底：本地已是已签到（比如换设备后刚同步），就不重复记账
+        showSuccessToast('签到成功')
         return
       }
 
