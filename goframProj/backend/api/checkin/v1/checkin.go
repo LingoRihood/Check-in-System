@@ -29,3 +29,11 @@ type DetailInfo struct {
 	RemainRetroTimes   int   `json:"remainRetroTimes"`   // 剩余补签次数
 	ConsecutiveDays    int   `json:"consecutiveDays"`    // 连续签到天数
 }
+
+// RetroReq 补签请求结构体
+type RetroReq struct {
+	g.Meta `path:"/checkins/retroactive" method:"POST" tags:"签到" summary:"补签"`
+	Date   string `p:"date" v:"required#请选择补签日期"`
+}
+
+type RetroRes struct{}

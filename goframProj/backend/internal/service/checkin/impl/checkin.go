@@ -71,6 +71,12 @@ var consecutiveBonusRules = []ConsecutiveBonusRule{
 	{TriggerDays: 30, Points: 100, BonusType: consecutiveBonus30},
 }
 
+var (
+	ErrInvalidRetroDate = errors.New("补签日期无效")
+	ErrChecked          = errors.New("日期已签到")
+	ErrRetroNotimes     = errors.New("本月补签次数已用完")
+)
+
 type Service struct {
 	rc *redis.Client
 }
@@ -604,4 +610,67 @@ func (s *Service) getMonthBitmap(ctx context.Context, userId uint64, year, month
 
 	retroBitmap := uint64(retroValues[0])
 	return checkinBitmap, retroBitmap, nil
+}
+
+// Retro 根据输入的日期进行补签
+func (s *Service) Retro(ctx context.Context, userId uint64, date time.Time) error {
+	// 1. 判断补签日期是否有效
+	if err := s.checkRetroDate(ctx, userId, date); err != nil {
+		return err
+	}
+
+	// 2. 执行补签逻辑
+	// 3. 计算连续签到日期发放连续签到奖励
+	return nil
+}
+
+func (s *Service) checkRetroDate(ctx context.Context, userId uint64, date time.Time) error {
+	// 补签日期不能是今天或者未来的日期
+	now := time.Now()
+	if date.Year() > now.Year() ||
+		date.Month() != now.Month() ||
+		(date.Year() == now.Year() && date.YearDay() >= now.YearDay()) {
+		// return errors.New("补签日期无效")
+		return ErrInvalidRetroDate
+	}
+
+	// 补签的日期不能是本月之前的日期
+	// 补签的日期不能是已经签到的日期(签到或者补签过都算)
+	checkinKey := fmt.Sprintf(yearSignKeyFormat, userId, date.Year())
+	yearOffset := date.YearDay() - 1
+	checked, err := s.rc.GetBit(ctx, checkinKey, int64(yearOffset)).Result()
+	if err != nil {
+		g.Log().Errorf(ctx, "GetBit 获取当天签到状态失败: %v", err)
+		return err
+	}
+
+	if checked == 1 {
+		// return errors.New("该日期已签到")
+		return ErrInvalidRetroDate
+	}
+
+	retroKey := fmt.Sprintf(monthRetroKeyFormat, userId, date.Year(), date.Month())
+	retroOffset := date.Day() - 1
+	retroRet, err := s.rc.GetBit(ctx, retroKey, int64(retroOffset)).Result()
+	if err != nil {
+		g.Log().Errorf(ctx, "GetBit 获取当天补签状态失败: %v", err)
+		return err
+	}
+
+	if retroRet == 1 {
+		return ErrInvalidRetroDate
+	}
+
+	// 每个月补签不能超过三次
+	// nil：表示不指定范围（统计整个 key 的所有 bit）
+	retroCount, err := s.rc.BitCount(ctx, retroKey, nil).Result()
+	if err != nil {
+		g.Log().Errorf(ctx, "BitCount 获取补签次数失败: %v", err)
+		return err
+	}
+
+	if retroCount >= maxRetroTimesPerMonth {
+		return ErrRetroNotimes
+	}
+	return nil
 }

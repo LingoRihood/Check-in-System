@@ -9,6 +9,7 @@ import (
 
 	"backend/internal/controller/checkin"
 	"backend/internal/controller/hello"
+	"backend/internal/controller/points"
 	"backend/internal/controller/userinfo"
 	"backend/internal/logic/middleware"
 	"backend/utility/injection"
@@ -47,6 +48,7 @@ var (
 					hello.NewV1(),
 					// userinfo.NewV1(), // 用户模块相关接口
 					checkin.NewV1(),
+					points.NewV1(),
 				)
 			})
 			s.Run()
