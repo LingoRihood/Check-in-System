@@ -8,3 +8,8 @@ import { http } from './http'
 export async function apiCheckinDaily(): Promise<void> {
   await http.post('/checkins')
 }
+
+/** 补签：POST /checkins/retroactive */
+export async function apiCheckinRetroactive(date: string): Promise<void> {
+  await http.post('/checkins/retroactive', { date })
+}

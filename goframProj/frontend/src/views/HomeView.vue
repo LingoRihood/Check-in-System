@@ -34,15 +34,14 @@
           />
           <div class="absolute inset-0 bg-gradient-to-t from-slate-900/85 via-slate-900/25 to-transparent"></div>
 
-          <!-- ✅ 改造：label 单独一行，不参与左右对齐 -->
+          <!-- ✅ label 单独一行 -->
           <div class="absolute bottom-3 left-3 right-3">
             <p class="text-white/80 text-xs">当前账号</p>
 
-            <!-- ✅ 这一行只负责左右对齐：左玻璃条 + 右徽章 -->
-            <div class="mt-2 flex items-stretch justify-between gap-3">
-              <!-- 左侧玻璃条（固定高度，确保和右侧齐） -->
+            <!-- ✅ 只保留左侧用户头像玻璃条，占满整行 -->
+            <div class="mt-2">
               <div
-                class="flex-1 min-w-0 h-16 flex items-center gap-3 rounded-2xl bg-slate-900/35 border border-white/10 px-3 backdrop-blur"
+                class="w-full min-w-0 h-16 flex items-center gap-3 rounded-2xl bg-slate-900/35 border border-white/10 px-3 backdrop-blur"
               >
                 <!-- ✅ 头像容器：强制居中 -->
                 <div
@@ -70,16 +69,6 @@
                     {{ isTodaySigned ? '保持连签可触发奖励' : '今天签到可得 +1 积分' }}
                   </p>
                 </div>
-              </div>
-
-              <!-- 右侧徽章（固定高度 + 固定宽度 + 垂直居中） -->
-              <div
-                class="h-16 w-[84px] shrink-0 rounded-2xl bg-white/10 border border-white/15 px-3 backdrop-blur flex flex-col justify-center"
-              >
-                <p class="text-[10px] text-white/70 leading-none text-center">本月累计</p>
-                <p class="mt-1 text-white text-sm font-semibold tabular-nums leading-none text-center">
-                  {{ points.monthPoints }} 分
-                </p>
               </div>
             </div>
           </div>
@@ -139,7 +128,7 @@
         />
       </div>
 
-      <!-- ✅ 连续签到奖励（新增：在日历和规则之间） -->
+      <!-- ✅ 连续签到奖励（在日历和规则之间） -->
       <div class="mt-4 rounded-3xl bg-amber-50/80 border border-amber-200 shadow-sm p-4">
         <div class="flex items-center justify-center gap-2">
           <i class="fa-solid fa-gift text-amber-600"></i>
@@ -154,16 +143,28 @@
           <div
             v-for="it in rewardCards"
             :key="it.key"
-            class="rounded-2xl border bg-white px-3 py-3 text-center"
-            :class="it.reached ? 'border-amber-300 shadow-sm' : 'border-amber-200/60 opacity-80'"
+            class="rounded-2xl border bg-white px-3 py-3 text-center transition-all duration-200"
+            :class="
+              it.reached
+                ? 'border-amber-400 border-2 shadow-[0_10px_26px_rgba(15,23,42,0.18)]'
+                : 'border-amber-200/60 opacity-80'
+            "
           >
             <div class="text-lg leading-none">{{ it.emoji }}</div>
             <p class="mt-1 text-sm font-medium text-slate-900">{{ it.title }}</p>
+
             <p class="mt-1 font-semibold text-amber-600 tabular-nums">+{{ it.bonus }}</p>
 
-            <!-- 你的 pointsStore 是“达成即自动发放”，所以这里用：已发放 / 未达成 -->
-            <p class="mt-1 text-[11px]" :class="it.awarded ? 'text-emerald-600' : 'text-slate-400'">
-              {{ it.awarded ? '已发放' : '未达成' }}
+            <!-- ✅ 达成：显示“已达成”；未达成：显示“未达成” -->
+            <p
+              class="mt-1"
+              :class="
+                it.reached
+                  ? 'text-[12px] font-semibold text-amber-700'
+                  : 'text-[11px] text-slate-400'
+              "
+            >
+              {{ it.reached ? '已达成' : '未达成' }}
             </p>
           </div>
         </div>
@@ -267,7 +268,7 @@ const avatarUrl = computed(() => {
   )
 })
 
-/** ✅ 连续签到奖励展示（新增） */
+/** ✅ 连续签到奖励展示 */
 const currentMonthState = computed(() => {
   // 这里会确保当月 state 存在（points.getMonthState 内部会 ensureMonth）
   return points.getMonthState(points.currentMonthKey)

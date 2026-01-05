@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import dayjs from 'dayjs'
 import { showFailToast, showSuccessToast } from 'vant'
-import { apiCheckinDaily } from '@/api/checkin'
+import { apiCheckinDaily, apiCheckinRetroactive } from '@/api/checkin'
+import { apiPointsSummary, apiPointsRecords, type BackendPointsRecord } from '@/api/points'
 import {
   clearUserPoints,
   loadUserPoints,
@@ -49,11 +50,34 @@ function sumPoints(records: PointsRecord[]) {
   return records.reduce((s, r) => s + r.points, 0)
 }
 
+function backendRecordToPointsRecord(r: BackendPointsRecord, fallbackId: string): PointsRecord {
+  const date = (r.transactionTime || '').slice(0, 10) || dayjs().format('YYYY-MM-DD')
+  // 后端 transactionType: 1=每日签到, 2=连续签到奖励, 3=补签(可能包含消耗/奖励)
+  let type: PointsRecord['type'] = 'earn'
+  if (r.transactionType === 1) type = 'checkin'
+  else if (r.transactionType === 2) type = 'bonus'
+  else if (r.transactionType === 3) type = r.pointsChange < 0 ? 'makeup_cost' : 'checkin'
+
+  return {
+    id: `${fallbackId}`,
+    date,
+    title: r.description || '积分变动',
+    type,
+    points: Number(r.pointsChange) || 0
+  }
+}
+
+
 export const usePointsStore = defineStore('points', {
   state: () => ({
     username: '' as string,
     data: null as UserPointsState | null,
-    checkinLoading: false as boolean
+    checkinLoading: false as boolean,
+
+    // 后端同步的积分数据（用于确保前后端一致）
+    backendTotal: null as number | null,
+    backendRecords: [] as PointsRecord[],
+    backendLoading: false as boolean
   }),
 
   getters: {
@@ -65,12 +89,17 @@ export const usePointsStore = defineStore('points', {
       return dayjs().format('YYYY-MM')
     },
     totalPoints(): number {
+      if (this.backendTotal != null) return this.backendTotal
       if (!this.data) return 0
       return sumPoints(this.data.records)
     },
     monthPoints(): number {
-      if (!this.data) return 0
       const key = this.currentMonthKey
+      // 优先使用后端记录计算
+      if (this.backendRecords.length) {
+        return sumPoints(this.backendRecords.filter(r => r.date.startsWith(key)))
+      }
+      if (!this.data) return 0
       return sumPoints(this.data.records.filter(r => r.date.startsWith(key)))
     },
     streakDays(): number {
@@ -95,6 +124,40 @@ export const usePointsStore = defineStore('points', {
   },
 
   actions: {
+    /**
+     * 从后端同步总积分与积分明细（用于替代/校准本地存储，保证一致）
+     */
+    async refreshBackendPoints(options?: { limit?: number; maxPages?: number }) {
+      const limit = options?.limit ?? 50
+      const maxPages = options?.maxPages ?? 10
+      if (this.backendLoading) return
+      this.backendLoading = true
+      try {
+        // 1) 总积分
+        const s = await apiPointsSummary()
+        this.backendTotal = Number(s?.total) || 0
+
+        // 2) 明细（分页拉取，最多 maxPages 页）
+        const all: PointsRecord[] = []
+        let offset = 0
+        for (let page = 0; page < maxPages; page++) {
+          const res = await apiPointsRecords({ limit, offset })
+          const list = Array.isArray(res?.list) ? res.list : []
+          list.forEach((item, i) => {
+            all.push(backendRecordToPointsRecord(item as any, `${offset + i}-${item.transactionTime}`))
+          })
+          if (!res?.hasMore) break
+          offset += limit
+        }
+        this.backendRecords = all
+      } catch (e) {
+        // 同步失败不阻断页面；仍可使用本地数据
+        console.error('[points] refreshBackendPoints failed', e)
+      } finally {
+        this.backendLoading = false
+      }
+    },
+
     reset() {
       this.username = ''
       this.data = null
@@ -109,6 +172,9 @@ export const usePointsStore = defineStore('points', {
 
       const now = dayjs()
       ensureMonth(this.data!, monthKey(now), now)
+
+      // 启动后端同步（不阻塞 UI）
+      void this.refreshBackendPoints({ limit: 50, maxPages: 10 })
 
       this.persist()
     },
@@ -178,21 +244,14 @@ export const usePointsStore = defineStore('points', {
 
       m.days[day] = { signed: true }
 
-      this.data.records.unshift({
-        id: uid(),
-        date: d.format('YYYY-MM-DD'),
-        title: '每日签到',
-        type: 'checkin',
-        points: RULES.daily
-      })
-
-      this.applyBonusesAfterChange(d)
+      // 后端会负责记账与发积分，这里只更新本地日历状态，然后同步后端积分数据
       this.persist()
+      await this.refreshBackendPoints({ limit: 50, maxPages: 10 })
 
-      showSuccessToast('签到成功 +1')
+      showSuccessToast('签到成功')
     },
 
-    makeup(dateStr: string) {
+    async makeup(dateStr: string) {
       if (!this.data) return
       const target = dayjs(dateStr)
       const today = dayjs().startOf('day')
@@ -205,29 +264,22 @@ export const usePointsStore = defineStore('points', {
 
       if (m.days[day].signed) return showFailToast('该日已签到')
       if (mk !== this.currentMonthKey) return showFailToast('仅支持当月补签')
+
+      // 后端会校验剩余补签次数/积分是否足够；前端这里只做基础拦截（避免明显无效请求）
       if (m.makeupUsed >= RULES.maxMakeupPerMonth) return showFailToast('本月补签次数已用完')
       if (this.totalPoints < RULES.makeupCost) return showFailToast('积分不足，无法补签')
 
-      this.data.records.unshift({
-        id: uid(),
-        date: target.format('YYYY-MM-DD'),
-        title: '补签消耗',
-        type: 'makeup_cost',
-        points: -RULES.makeupCost
-      })
-      this.data.records.unshift({
-        id: uid(),
-        date: target.format('YYYY-MM-DD'),
-        title: '补签签到',
-        type: 'checkin',
-        points: RULES.daily
-      })
+      try {
+        await apiCheckinRetroactive(target.format('YYYY-MM-DD'))
+      } catch (e: any) {
+        return showFailToast(e?.response?.data?.message || e?.message || '补签失败')
+      }
 
+      // 本地仅更新日历展示；积分明细/总分以服务端为准
       m.days[day] = { signed: true, makeup: true }
       m.makeupUsed += 1
-
-      this.applyBonusesAfterChange(dayjs())
       this.persist()
+      await this.refreshBackendPoints({ limit: 50, maxPages: 10 })
 
       showSuccessToast('补签成功')
     },
@@ -270,6 +322,8 @@ export const usePointsStore = defineStore('points', {
     },
 
     getRecordsByMonth(key: string) {
+      // 若已从后端拉取过记录，优先使用后端记录（保证一致）
+      if (this.backendRecords.length) return this.backendRecords.filter(r => r.date.startsWith(key))
       if (!this.data) return []
       return this.data.records.filter(r => r.date.startsWith(key))
     }
