@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/gogf/gf/v2/database/gdb"
+	"github.com/gogf/gf/v2/errors/gcode"
+	"github.com/gogf/gf/v2/errors/gerror"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/redis/go-redis/v9"
@@ -20,10 +22,11 @@ import (
 // 签到相关业务逻辑的具体实现
 
 const (
-	yearSignKeyFormat           = "user:checkins:daily:%d:%d"     // user:checkins:daily:12131321421312:2025
-	monthRetroKeyFormat         = "user:checkins:retro:%d:%d%02d" // user:checkins:retro:12131321421231202501
-	defaultDailyPoints    int64 = 1                               // 每日签到积分（注意：用 int64，和积分字段统一）
-	maxRetroTimesPerMonth       = 3                               // 单月最多补签次数
+	yearSignKeyFormat            = "user:checkins:daily:%d:%d"     // user:checkins:daily:12131321421312:2025
+	monthRetroKeyFormat          = "user:checkins:retro:%d:%d%02d" // user:checkins:retro:12131321421231202501
+	defaultDailyPoints     int64 = 1                               // 每日签到积分（注意：用 int64，和积分字段统一）
+	defaultRetroCostPoints       = 100                             // 补签消耗积分
+	maxRetroTimesPerMonth        = 3                               // 单月最多补签次数
 )
 
 type PointsTransactionType int
@@ -54,7 +57,7 @@ var consecutiveBonusNames = map[ConsecutiveBonusType]string{
 var PointsTransactionTypeMsgMap = map[PointsTransactionType]string{
 	PointsTransactionTypeDaily:       "每日签到奖励",
 	PointsTransactionTypeConsecutive: "连续签到奖励",
-	PointsTransactionTypeRetro:       "补签消耗积分",
+	PointsTransactionTypeRetro:       "补签%s消耗积分",
 }
 
 // consecutiveBonusRule 连续签到奖励规则
@@ -75,6 +78,7 @@ var (
 	ErrInvalidRetroDate = errors.New("补签日期无效")
 	ErrChecked          = errors.New("日期已签到")
 	ErrRetroNotimes     = errors.New("本月补签次数已用完")
+	ErrNoEnoughPoints   = gerror.New("积分不足")
 )
 
 type Service struct {
@@ -620,8 +624,106 @@ func (s *Service) Retro(ctx context.Context, userId uint64, date time.Time) erro
 	}
 
 	// 2. 执行补签逻辑
+	// 2.1 Redis里 补签的月度bitmap 中设置补签的标识
+	retroKey := fmt.Sprintf(monthRetroKeyFormat, userId, date.Year(), date.Month())
+	retroOffset := date.Day() - 1 // 索引是从0开始的，所以要减1
+
+	// 因为 IntCmd 嵌入了 baseCmd，所以 baseCmd 的方法会被“提升”，表现得像是 IntCmd 自己的方法
+	// 写 cmd.Err()等价于 cmd.baseCmd.Err()
+	err := s.rc.SetBit(ctx, retroKey, int64(retroOffset), 1).Err()
+	if err != nil {
+		g.Log().Errorf(ctx, "SetBit 设置补签状态失败: %v", err)
+		return gerror.NewCode(gcode.CodeInternalError)
+	}
+
+	// 2.2 补签消耗积分、增加积分、增加积分记录
+	// 正常应该把签到服务和积分服务分开，通过消息队列的方式实现事件驱动。
+	// 签到服务负责签到/补签，发出消息；积分服务监听消息，处理积分的增加和扣减逻辑。
+	if err := s.retroWithTransaction(ctx, userId, date); err != nil {
+		// 如果数据库更新失败，则回滚 Redis 中的补签标识
+		err := s.rc.SetBit(ctx, retroKey, int64(retroOffset), 0).Err()
+		if err != nil {
+			g.Log().Errorf(ctx, "SetBit 回滚补签状态失败: %v", err)
+			return gerror.NewCode(gcode.CodeInternalError)
+		}
+	}
+
 	// 3. 计算连续签到日期发放连续签到奖励
-	return nil
+	return s.updateConsecutiveBonus(ctx, userId, date.Year(), int(date.Month()))
+}
+
+// retroWithTransaction 补签逻辑，使用事务保证原子性
+func (s *Service) retroWithTransaction(ctx context.Context, userId uint64, date time.Time) error {
+	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		// 1. 查询用户的当前积分，积分不够的不能补签
+		var userPoint entity.UserPoints
+		if err := tx.Model(dao.UserPoints.Table()).
+			Where(dao.UserPoints.Columns().UserId, userId).
+			Scan(&userPoint); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				g.Log().Errorf(ctx, "查询用户积分失败: %v", err)
+				return err
+			}
+			// 如果是 ErrNoRows（没记录），就手动给一个默认值
+			userPoint = entity.UserPoints{
+				UserId: userId,
+			}
+		}
+
+		if userPoint.Points < defaultRetroCostPoints {
+			return ErrNoEnoughPoints
+		}
+
+		// 2. 计算积分变化（补签消耗的、每日签到奖励）
+		pointsChange := -defaultRetroCostPoints + defaultDailyPoints
+		nowPoints := userPoint.Points + int64(pointsChange)
+		nowTotalPoints := userPoint.PointsTotal + defaultDailyPoints // 只算得到的积分，不算消费的
+
+		// 3. 积分记录中新增一条补签消耗100积分的记录
+		retroCostRecord := entity.UserPointsTransactions{
+			UserId:          userId,
+			PointsChange:    -defaultRetroCostPoints,
+			TransactionType: int(PointsTransactionTypeRetro),
+			// Description:     PointsTransactionTypeMsgMap[PointsTransactionTypeRetro],
+			Description:    fmt.Sprintf(PointsTransactionTypeMsgMap[PointsTransactionTypeRetro], date.Format(time.DateOnly)),
+			CurrentBalance: userPoint.Points - defaultRetroCostPoints,
+			CreatedAt:      gtime.NewFromTime(time.Now()),
+			UpdatedAt:      gtime.NewFromTime(time.Now()),
+		}
+
+		if _, err := tx.Model(dao.UserPointsTransactions.Table()).Insert(&retroCostRecord); err != nil {
+			g.Log().Errorf(ctx, "插入补签消耗的积分记录失败: %v", err)
+			return err
+		}
+
+		// 4. 积分记录中新增每日签到固定得的奖励积分记录
+		checkinBonusRecord := entity.UserPointsTransactions{
+			UserId:          userId,
+			PointsChange:    defaultDailyPoints,
+			TransactionType: int(PointsTransactionTypeDaily),
+			Description:     PointsTransactionTypeMsgMap[PointsTransactionTypeDaily],
+			CurrentBalance:  nowPoints,
+			CreatedAt:       gtime.NewFromTime(time.Now()),
+			UpdatedAt:       gtime.NewFromTime(time.Now()),
+		}
+
+		if _, err := tx.Model(dao.UserPointsTransactions.Table()).Insert(&checkinBonusRecord); err != nil {
+			g.Log().Errorf(ctx, "插入补签奖励积分记录失败: %v", err)
+			return err
+		}
+
+		// 5. 更新用户积分
+		userPoint.Points = nowPoints
+		userPoint.PointsTotal = nowTotalPoints
+		if _, err := tx.Model(dao.UserPoints.Table()).
+			Where(dao.UserPoints.Columns().UserId, userId).
+			Update(&userPoint); err != nil {
+			g.Log().Errorf(ctx, "更新用户积分失败: %v", err)
+			return err
+		}
+
+		return nil
+	})
 }
 
 func (s *Service) checkRetroDate(ctx context.Context, userId uint64, date time.Time) error {
