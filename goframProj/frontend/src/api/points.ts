@@ -20,6 +20,8 @@ export async function apiPointsSummary(): Promise<PointsSummaryRes> {
   const res = await http.get('/points/summary')
   // 后端可能包一层 {code,message,data}，也可能直接返回 data
   const payload = res.data
+
+  // 返回：积分汇总，比如 { total: 100 }
   return (payload && typeof payload === 'object' && 'data' in payload) ? payload.data : payload
 }
 
