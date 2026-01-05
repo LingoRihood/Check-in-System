@@ -160,7 +160,7 @@
               class="mt-1"
               :class="
                 it.reached
-                  ? 'text-[12px] font-semibold text-amber-700'
+                  ? 'text-sm font-semibold text-amber-700'
                   : 'text-[11px] text-slate-400'
               "
             >
