@@ -302,7 +302,9 @@ function prevMonth() {
     cursor.monthIndex = 11
     cursor.year -= 1
   }
-  points.getMonthState(monthKey(cursor.year, cursor.monthIndex))
+  const ym = monthKey(cursor.year, cursor.monthIndex)
+  points.getMonthState(ym)
+  void points.refreshCalendar(ym)
 }
 
 function nextMonth() {
@@ -311,7 +313,9 @@ function nextMonth() {
     cursor.monthIndex = 0
     cursor.year += 1
   }
-  points.getMonthState(monthKey(cursor.year, cursor.monthIndex))
+  const ym = monthKey(cursor.year, cursor.monthIndex)
+  points.getMonthState(ym)
+  void points.refreshCalendar(ym)
 }
 
 function openDaySheet(dateStr: string) {
@@ -330,6 +334,8 @@ async function onLogout() {
 }
 
 onMounted(() => {
-  points.getMonthState(monthKey(cursor.year, cursor.monthIndex))
+  const ym = monthKey(cursor.year, cursor.monthIndex)
+  points.getMonthState(ym)
+  void points.refreshCalendar(ym)
 })
 </script>

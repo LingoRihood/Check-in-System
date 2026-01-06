@@ -167,6 +167,16 @@ watch(
   () => (selectedDay.value = dayjs().date()) // Ensure selectedDay is always today's date when month changes
 )
 
+// ✅ 月份切换时，从后端同步该月日历（数据库真实数据）
+watch(
+  () => [props.year, props.monthIndex],
+  () => {
+    const ym = monthStart.value.format('YYYY-MM')
+    void points.refreshCalendar(ym)
+  },
+  { immediate: true }
+)
+
 function mk() {
   return monthStart.value.format('YYYY-MM')
 }
@@ -196,6 +206,8 @@ function isPast(day: number) {
 }
 
 function canMakeup(day: number) {
+  // ✅ 日历未从后端加载完成时，不做任何“可补签/漏签”推断（避免本地误标）
+  if (!points.isCalendarReady(mk())) return false
   // 仅当月过去漏签才有意义
   if (!isPast(day)) return false
   const info = dayInfo(day)
@@ -204,6 +216,8 @@ function canMakeup(day: number) {
 }
 
 function isMissed(day: number) {
+  // ✅ 日历未从后端加载完成时，不做任何“漏签”推断（避免本地误标）
+  if (!points.isCalendarReady(mk())) return false
   // 仅当月过去且未签
   if (!isPast(day)) return false
   const info = dayInfo(day)

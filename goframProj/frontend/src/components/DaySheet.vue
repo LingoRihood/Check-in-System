@@ -76,9 +76,22 @@ const innerShow = ref(props.show)
 watch(() => props.show, (v) => (innerShow.value = v))
 watch(innerShow, (v) => { if (!v) emit('close') })
 
+// ✅ 确保弹窗打开的月份日历来自后端（数据库真实数据）
+watch(
+  () => props.dateStr,
+  (v) => {
+    const ym = dayjs(v).format('YYYY-MM')
+    void points.refreshCalendar(ym)
+  },
+  { immediate: true }
+)
+
 const d = computed(() => dayjs(props.dateStr))
 const title = computed(() => `${d.value.format('YYYY 年 M 月 D 日')}`)
 const sub = computed(() => (props.dateStr === dayjs().format('YYYY-MM-DD') ? '今天' : '日期详情'))
+
+const calendarYM = computed(() => d.value.format('YYYY-MM'))
+const calendarReady = computed(() => points.isCalendarReady(calendarYM.value) && !points.isCalendarLoading(calendarYM.value))
 
 const signed = computed(() => points.isSigned(props.dateStr))
 const isFuture = computed(() => d.value.isAfter(dayjs().startOf('day')))
@@ -86,6 +99,8 @@ const isCurrentMonth = computed(() => d.value.format('YYYY-MM') === dayjs().form
 const isToday = computed(() => props.dateStr === dayjs().format('YYYY-MM-DD'))
 
 const action = computed(() => {
+  // ✅ 日历未加载完成前，不给出“补签/漏签”判断，避免误导
+  if (!calendarReady.value) return { canAct: false, label: '加载中', kind: 'none' as const }
   if (signed.value) return { canAct: false, label: '已完成', kind: 'none' as const }
   if (isFuture.value) return { canAct: false, label: '未开始', kind: 'none' as const }
   if (isToday.value) return { canAct: true, label: '签到', kind: 'checkin' as const }

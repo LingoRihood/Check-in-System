@@ -9,7 +9,7 @@ import (
 	v1 "backend/api/userinfo/v1"
 	"backend/internal/model"
 
-	"github.com/gogf/gf/errors/gerror"
+	"github.com/gogf/gf/v2/errors/gerror"
 )
 
 func (c *ControllerV1) Login(ctx context.Context, req *v1.LoginReq) (res *v1.LoginRes, err error) {
