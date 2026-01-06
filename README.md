@@ -20,11 +20,13 @@ Vue3：最新的Vue版本，提供了更强大的功能和更好的性能。
 Vite：下一代前端开发与构建工具，支持热更新等功能。
 # 运行
 请看goframProj/README.md
+# 演示效果
+- 账户Henry
 
-账户Henry
 ![alt text](image-1.png)
 
 ![alt text](image.png)
 
-这是另一个账户Richard
+- 另一个账户Richard
+
 ![alt text](image-2.png)
