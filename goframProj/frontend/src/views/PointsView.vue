@@ -14,8 +14,16 @@
         <p class="text-xs text-slate-500 leading-tight">查看每笔积分变动</p>
       </div>
 
-      <div class="h-10 w-10 rounded-xl bg-white border border-slate-200 shadow-sm overflow-hidden flex items-center justify-center">
-        <van-image :src="avatarUrl" width="40" height="40" round fit="cover" alt="avatar" />
+      <!-- ✅ 头像：变大 + 无空隙贴边框 -->
+      <div class="h-12 w-12 rounded-xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+        <van-image
+          :src="avatarUrl"
+          width="100%"
+          height="100%"
+          fit="cover"
+          class="w-full h-full"
+          alt="avatar"
+        />
       </div>
     </header>
 

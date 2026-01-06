@@ -25,20 +25,32 @@ export type MonthState = {
   bonusAwarded: Record<string, boolean>
 }
 
+export type PointsRecord = {
+  id: string
+  date: string
+  title: string
+  points: number
+  type: 'earn' | 'spend'
+}
+
 function monthKey(d: dayjs.Dayjs) {
   return d.format('YYYY-MM')
 }
 
-function mapBackendRecord(r: BackendPointsRecord, idx: number) {
+// ✅ 关键修复：显式返回 PointsRecord，避免 type 被 TS 推断成 string
+function mapBackendRecord(r: BackendPointsRecord, idx: number): PointsRecord {
   const t = r.transactionTime || ''
-  const type = Number(r.transactionType) || 0
+  const txType = Number(r.transactionType) || 0
   const delta = Number(r.pointsChange) || 0
 
   return {
-    id: `${t}-${type}-${delta}-${idx}`,
+    id: `${t}-${txType}-${delta}-${idx}`,
     date: t ? dayjs(t).format('YYYY-MM-DD') : '',
     title: r.description || '积分变动',
-    points: delta
+    points: delta,
+    // ✅ 关键：补齐 PointsRecordItem 需要的 type 字段
+    // 规则：>=0 视为获取，<0 视为消耗
+    type: delta >= 0 ? 'earn' : 'spend'
   }
 }
 
@@ -48,7 +60,7 @@ export const usePointsStore = defineStore('points', {
 
     /** ✅ 后端积分数据（真实） */
     backendTotal: 0 as number,
-    backendRecords: [] as Array<{ id: string; date: string; title: string; points: number }>,
+    backendRecords: [] as PointsRecord[],
     backendLoading: false as boolean,
 
     /** ✅ 后端签到日历（真实）：yearMonth -> detail */
