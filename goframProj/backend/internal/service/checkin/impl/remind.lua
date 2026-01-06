@@ -1,29 +1,49 @@
--- KEYS[1]: 用户签到key
--- ARGV[1]: 当前日偏移量(从年初开始的天数), 即从年初开始的今天是第几天（例如：1 月 1 日为 1，1 月 2 日为 2，以此类推）。
--- ARGV[2]: 提醒阈值, 即最多检查多少天之前的签到状态来决定是否给用户提醒。
+-- KEYS[1]: 用户签到key (年签到位图，例如 yearSignKeyFormat(userId, year))
+-- ARGV[1]: 当前日偏移量（0-based）
+--         例如：1月1日为 0，1月2日为 1，以此类推（Go 里传的是 YearDay()-1）
+-- ARGV[2]: 提醒阈值 threshold（最多检查 offset 之前连续多少天都签到）
 
--- offset 是当前日期的偏移量（从年初开始的第几天）
 local offset = tonumber(ARGV[1])
-
--- threshold 是提醒阈值（多少天内连续签到才不提醒）
 local threshold = tonumber(ARGV[2])
 
--- 检查今天是否已签到(最新位)
-local today = redis.call('GETBIT', KEYS[1], offset)
-if today == 1 then return 0 end  -- 已签到无需提醒
+-- 参数保护：缺参/非法直接不提醒
+if offset == nil or threshold == nil then
+    return 0
+end
+if threshold <= 0 then
+    return 0
+end
+if offset < 0 then
+    return 0
+end
 
--- 检查最近threshold天的签到情况
-local continuous = true
-for i = 1, threshold do
+-- 检查今天是否已签到
+local today = redis.call('GETBIT', KEYS[1], offset)
+if today == 1 then
+    return 0 -- 已签到无需提醒
+end
+
+-- ✅ 年初处理：如果历史天数不足 threshold，就按已有天数检查
+-- 例如：
+-- 1月1日 offset=0 -> checkDays=0（没有昨天）-> 不提醒
+-- 1月2日 offset=1, threshold=2 -> checkDays=1（只检查 day0）
+local checkDays = threshold
+if offset < threshold then
+    checkDays = offset
+end
+
+-- 如果没有可检查的历史天数（例如 1月1日），不提醒
+if checkDays <= 0 then
+    return 0
+end
+
+-- 检查今天之前 checkDays 天是否连续签到
+for i = 1, checkDays do
     local bit = redis.call('GETBIT', KEYS[1], offset - i)
-    -- 如果某一天的签到状态不是 1（即 bit ~= 1），表示用户某天没有签到，将 continuous 设为 false，并退出循环（break）
     if bit ~= 1 then
-        continuous = false
-        break
+        return 0
     end
 end
 
--- 返回结果：1需要提醒 0不需要
-return continuous and 1 or 0
--- 如果 continuous 为 true：continuous and 1 会返回 1，然后 or 0 不会影响，最终返回 1。
--- 如果 continuous 为 false：continuous and 1 会返回 false，然后 or 0 会使整个表达式的结果变成 0
+-- 今天没签，且之前连续（可检查的）天数都签了：需要提醒
+return 1

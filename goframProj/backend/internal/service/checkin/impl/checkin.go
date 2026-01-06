@@ -91,96 +91,11 @@ func NewService() *Service {
 	}
 }
 
-// // Daily 每日签到
-// func (s *Service) Daily(ctx context.Context, userId uint64) error {
-// 	// 采用服务器时间进行每日签到，不依赖客户端传递的时间
-// 	// 1. Redis 中使用 bitmap setbit 执行签到逻辑
-// 	// 拿到当天是一年中的第几天，然后使用 setbit 记录这一天是否签到
-// 	now := time.Now()
-// 	year := now.Year()
-// 	dayOfYearOffset := now.YearDay() - 1 // 因为 Redis bitmap 从 0 开始，所以要减一
-// 	key := fmt.Sprintf(yearSignKeyFormat, userId, year)
-// 	g.Log().Debugf(ctx, "key: %s dayOfYearOffset:%d", key, dayOfYearOffset)
-
-// 	ret := s.rc.SetBit(ctx, key, int64(dayOfYearOffset), 1).Val()
-// 	if ret == 1 {
-// 		return errors.New("今日已签到")
-// 	}
-
-// 	// 2. 发放每日签到的积分
-// 	// 用户积分汇总表 user_points 增加积分
-// 	// 2.1 先查询(新用户可能没有记录)
-// 	var userPoint entity.UserPoints
-// 	if err := dao.UserPoints.Ctx(ctx).
-// 		Where(dao.UserPoints.Columns().UserId, userId).
-// 		Scan(&userPoint); err != nil && !errors.Is(err, sql.ErrNoRows) {
-// 		g.Log().Errorf(ctx, "查询用户积分汇总表失败: %v", err)
-// 		return err
-// 	}
-
-// 	// 如果查不到，则插入一条记录
-// 	if userPoint.Id == 0 {
-// 		userPoint = entity.UserPoints{UserId: userId} // 创建新对象
-// 	}
-
-// 	userPoint.Points = userPoint.Points + defaultDailyPoints           // 增加每日签到积分
-// 	userPoint.PointsTotal = userPoint.PointsTotal + defaultDailyPoints // 累计积分
-
-// 	// 2.2 事务更新 用户积分汇总表 和 用户积分明细表
-// 	// 为什么要事务？
-// 	// 因为要保证：流水插入成功, 汇总更新成功
-// 	// 这两件事要么都成功，要么都失败，不然会出现“余额变了但没流水”或“有流水但余额没变”。
-// 	err := g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-// 		// 用户积分明细表 user_points_transactions 增加记录
-// 		newRecord := entity.UserPointsTransactions{
-// 			UserId:          userId,
-// 			PointsChange:    defaultDailyPoints,
-// 			CurrentBalance:  userPoint.Points,
-// 			TransactionType: int(PointsTransactionTypeDaily),
-// 			Description:     PointsTransactionTypeMsgMap[PointsTransactionTypeDaily],
-// 			CreatedAt:       gtime.NewFromTime(time.Now()),
-// 			UpdatedAt:       gtime.NewFromTime(time.Now()),
-// 		}
-
-// 		// return nil => 提交 commit
-// 		// return err => 回滚 rollback
-// 		// tx.Model(...)：明确使用事务 tx 执行 SQL
-// 		if _, err := tx.Model(&entity.UserPointsTransactions{}).Insert(&newRecord); err != nil {
-// 			g.Log().Errorf(ctx, "插入用户积分明细表失败: %v", err)
-// 			return err
-// 		}
-// 		if _, err := tx.Model(&entity.UserPoints{}).
-// 			Where(dao.UserPoints.Columns().UserId, userId).
-// 			Save(&userPoint); err != nil {
-// 			g.Log().Errorf(ctx, "更新用户积分汇总表失败: %v", err)
-// 			return err
-// 		}
-// 		return nil
-// 	})
-
-// 	if err != nil {
-// 		g.Log().Errorf(ctx, "事务处理失败: %v", err)
-// 		return err
-// 	}
-
-// 	// 3. 发送连续签到的奖励积分
-
-// 	return nil
-// }
-
 // Daily 每日签到（先 DB 成功，再 setbit）
 // ✅ 先 DB 加分成功
 // ✅ 再 Redis 标记已签到
 // 这样就不会出现“签了但没加分”
-// 关键点：
-// 1) 先 GetBit 判断是否已签到（只读）
-// 2) 事务里：写明细 + 更新/插入汇总（先 DB）
-// 3) DB 成功后：SetBit 标记已签到
-// 4) 用 Redis SetNX 做锁，防止并发重复加分
 func (s *Service) Daily(ctx context.Context, userId uint64) error {
-	// 采用服务器时间进行每日签到，不依赖客户端传递的时间
-	// 1. Redis 中使用 bitmap setbit 执行签到逻辑
-	// 拿到当天是一年中的第几天，然后使用 setbit 记录这一天是否签到
 	now := time.Now()
 	year := now.Year()
 	dayOfYearOffset := now.YearDay() - 1 // 因为 Redis bitmap 从 0 开始，所以要减1
@@ -206,72 +121,7 @@ func (s *Service) Daily(ctx context.Context, userId uint64) error {
 		return errors.New("今日已签到")
 	}
 
-	// 2) 先 DB：事务里写明细 + 更新/插入汇总
-	// err = g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-	// 	// 2.1 查询积分汇总（新用户可能没有记录）
-	// 	var userPoint entity.UserPoints
-	// 	if err := tx.Model(&entity.UserPoints{}).
-	// 		Where(dao.UserPoints.Columns().UserId, userId).
-	// 		Scan(&userPoint); err != nil && !errors.Is(err, sql.ErrNoRows) {
-	// 		g.Log().Errorf(ctx, "查询用户积分汇总表失败: %v", err)
-	// 		return err
-	// 	}
-
-	// 	isNew := userPoint.Id == 0
-	// 	if isNew {
-	// 		userPoint = entity.UserPoints{
-	// 			UserId: userId,
-	// 		}
-	// 	}
-
-	// 	// 2.2 计算加分后的值
-	// 	userPoint.Points += defaultDailyPoints
-	// 	userPoint.PointsTotal += defaultDailyPoints
-
-	// 	// 2.3 插入积分明细
-	// 	newRecord := entity.UserPointsTransactions{
-	// 		UserId:          userId,
-	// 		PointsChange:    defaultDailyPoints,
-	// 		CurrentBalance:  userPoint.Points,
-	// 		TransactionType: int(PointsTransactionTypeDaily), // ✅ entity 字段是 int，显式转换
-	// 		Description:     PointsTransactionTypeMsgMap[PointsTransactionTypeDaily],
-	// 		CreatedAt:       gtime.NewFromTime(now),
-	// 		UpdatedAt:       gtime.NewFromTime(now),
-	// 	}
-
-	// 	if _, err := tx.Model(&entity.UserPointsTransactions{}).Insert(&newRecord); err != nil {
-	// 		g.Log().Errorf(ctx, "插入用户积分明细表失败: %v", err)
-	// 		return err
-	// 	}
-
-	// 	// 2.4 更新/插入积分汇总
-	// 	if isNew {
-	// 		userPoint.CreatedAt = gtime.NewFromTime(now)
-	// 		userPoint.UpdatedAt = gtime.NewFromTime(now)
-
-	// 		if _, err := tx.Model(&entity.UserPoints{}).Insert(&userPoint); err != nil {
-	// 			g.Log().Errorf(ctx, "插入用户积分汇总表失败: %v", err)
-	// 			return err
-	// 		}
-	// 	} else {
-	// 		if _, err := tx.Model(&entity.UserPoints{}).
-	// 			Where(dao.UserPoints.Columns().UserId, userId).
-	// 			Data(g.Map{
-	// 				dao.UserPoints.Columns().Points:      userPoint.Points,
-	// 				dao.UserPoints.Columns().PointsTotal: userPoint.PointsTotal,
-	// 				dao.UserPoints.Columns().UpdatedAt:   gtime.NewFromTime(now),
-	// 			}).
-	// 			Update(); err != nil {
-	// 			g.Log().Errorf(ctx, "更新用户积分汇总表失败: %v", err)
-	// 			return err
-	// 		}
-	// 	}
-
-	// 	return nil
-	// })
-
-	// 2. 发放每日签到的积分
-	// 先写 DB 加积分
+	// 2) 先 DB：发放每日签到积分（事务：明细+汇总）
 	if err := s.AddPoints(ctx, &model.PointsTransactionInput{
 		UserId: userId,
 		Points: defaultDailyPoints,
@@ -292,7 +142,11 @@ func (s *Service) Daily(ctx context.Context, userId uint64) error {
 		return errors.New("今日已签到")
 	}
 
-	// 3. 发送连续签到的奖励积分
+	// ✅ 新增：记录活跃用户（用于定时提醒任务取候选用户）
+	// 放在 DB + Redis 都成功之后
+	_ = TouchActiveUser(ctx, userId, now)
+
+	// 4) 发送连续签到的奖励积分
 	return s.updateConsecutiveBonus(ctx, userId, year, int(now.Month()))
 }
 
@@ -305,9 +159,6 @@ func (s *Service) updateConsecutiveBonus(ctx context.Context, userId uint64, yea
 		return err
 	}
 
-	// 2. 计算连续签到奖励积分
-	// 3. 更新用户积分汇总表和用户积分明细表
-	// 如何避免重复发放连续签到奖励? --> 使用 user_monthly_bonus_log 表记录用户指定月份已领取的奖励
 	// 2.1 查询用户本月已领取的奖励（避免重复发放）
 	var bonusLogs []*entity.UserMonthlyBonusLog
 	if err := dao.UserMonthlyBonusLog.Ctx(ctx).
@@ -318,18 +169,13 @@ func (s *Service) updateConsecutiveBonus(ctx context.Context, userId uint64, yea
 		return err
 	}
 
-	// 用 BonusType 做去重 key（比用 Description 更稳）
-	// 把领取的奖励塞到map中，方便后续判断是否已经发放过奖励
 	bonusLogsMap := make(map[ConsecutiveBonusType]bool)
 	for _, v := range bonusLogs {
 		bonusLogsMap[ConsecutiveBonusType(v.BonusType)] = true
 	}
 
-	// 遍历连续签到奖励配置，如果符合条件就发奖励
 	for _, rule := range consecutiveBonusRules {
 		if maxConsecutive >= rule.TriggerDays && !bonusLogsMap[rule.BonusType] {
-			// 发放连续签到奖励积分
-			// 更新 user_points 表和 user_points_transactions 表
 			if err := s.AddPoints(ctx, &model.PointsTransactionInput{
 				UserId: userId,
 				Points: rule.Points,
@@ -340,7 +186,6 @@ func (s *Service) updateConsecutiveBonus(ctx context.Context, userId uint64, yea
 				continue
 			}
 
-			// 记录到 user_monthly_bonus_log 表（用于幂等）
 			now := time.Now()
 			newLog := &entity.UserMonthlyBonusLog{
 				UserId:      userId,
@@ -352,12 +197,10 @@ func (s *Service) updateConsecutiveBonus(ctx context.Context, userId uint64, yea
 			}
 
 			if _, err := dao.UserMonthlyBonusLog.Ctx(ctx).Insert(newLog); err != nil {
-				// 积分已加，连续签到奖励已发，但月度奖励记录插入失败，需要手动处理
 				g.Log().Errorf(ctx, "[NEED_HANDLE]插入用户月度奖励记录失败: %v", err)
 				continue
 			}
 
-			// 更新本地 map，避免本次循环中重复发
 			bonusLogsMap[rule.BonusType] = true
 		}
 	}
@@ -373,19 +216,14 @@ func (s *Service) CalcMonthConsecutiveDays(ctx context.Context, userId uint64, y
 		g.Log().Errorf(ctx, "获取用户签到记录失败: %v", err)
 		return 0, err
 	}
-	// 逻辑或
-	bitmap := checkinBitmap | retroBitmap // 合并本月签到和补签数据
-
+	bitmap := checkinBitmap | retroBitmap
 	return calcMaxConsecutiveDays(bitmap, monthDays), nil
 }
 
-// calcMaxConsecutiveDays 计算最大连续签到天数
 func calcMaxConsecutiveDays(bitmap uint64, monthDays int) int {
-	// 逐位判断，计算出连续签到天数
 	maxCount := 0
 	currCount := 0
 	for i := 0; i < monthDays; i++ {
-		// 从右向左逐位判断
 		checked := (bitmap>>i)&1 == 1
 		if checked {
 			currCount++
@@ -396,38 +234,24 @@ func calcMaxConsecutiveDays(bitmap uint64, monthDays int) int {
 			currCount = 0
 		}
 	}
-	// 循环结束再最后比较一次
 	if currCount > maxCount {
 		maxCount = currCount
 	}
 	return maxCount
 }
 
-// getFirstOfMonthOffset 获取当月第一天在一年中的偏移量
-// 假设 2025-12-01：
-// time.Date(2025, 12, 1, ...) 得到 12 月 1 日
-// firstOfMonth.YearDay() 得到它是一年中的第几天（2025 不是闰年，12/1 是第 335 天）
-// 那么 offset = 335 - 1 = 334
-// 注意：这里使用 time.Local，保证和 Daily() 的 time.Now() 同一时区口径
 func getFirstOfMonthOffset(year, month int) int {
-	// 1. 获取当月第一天
 	firstOfMonth := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.Local)
-	// 2. 计算偏移量
-	return firstOfMonth.YearDay() - 1 // offset 从 0 开始
+	return firstOfMonth.YearDay() - 1
 }
 
-// getMonhDays 获取当月天数
-// 注意：使用 time.Local，避免时区差异导致月界限异常
 func getMonthDays(year, month int) int {
-	// 1. 获取当月第一天
 	firstOfMonth := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.Local)
-	// 2. 获取当月最后一天
 	lastOfMonth := firstOfMonth.AddDate(0, 1, -1)
-	return lastOfMonth.Day() // 返回当月天数
+	return lastOfMonth.Day()
 }
 
 // AddPoints 封装“积分变更”的事务逻辑：写明细 + 更新/插入汇总
-// input.Points 可正可负：正数=加分，负数=扣分（如需禁止扣分可在下面校验）
 func (s *Service) AddPoints(ctx context.Context, input *model.PointsTransactionInput) error {
 	if input == nil {
 		return errors.New("input is nil")
@@ -436,13 +260,12 @@ func (s *Service) AddPoints(ctx context.Context, input *model.PointsTransactionI
 		return errors.New("invalid userId")
 	}
 	if input.Points == 0 {
-		return nil // 没有变更直接返回
+		return nil
 	}
 
 	now := time.Now()
 
 	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 1) 查询积分汇总（新用户可能没有记录）
 		var userPoint entity.UserPoints
 		if err := tx.Model(&entity.UserPoints{}).
 			Where(dao.UserPoints.Columns().UserId, input.UserId).
@@ -458,20 +281,16 @@ func (s *Service) AddPoints(ctx context.Context, input *model.PointsTransactionI
 			}
 		}
 
-		// 2) 计算新余额（可选：不允许余额为负）
 		newBalance := userPoint.Points + input.Points
 		if newBalance < 0 {
 			return errors.New("积分不足")
 		}
 
-		// 3) 更新汇总
 		userPoint.Points = newBalance
-		// PointsTotal 通常表示“累计获得”，一般只在加分时累加
 		if input.Points > 0 {
 			userPoint.PointsTotal += input.Points
 		}
 
-		// 4) 插入积分明细
 		newRecord := entity.UserPointsTransactions{
 			UserId:          input.UserId,
 			PointsChange:    input.Points,
@@ -486,7 +305,6 @@ func (s *Service) AddPoints(ctx context.Context, input *model.PointsTransactionI
 			return err
 		}
 
-		// 5) 更新/插入积分汇总
 		if isNew {
 			userPoint.CreatedAt = gtime.NewFromTime(now)
 			userPoint.UpdatedAt = gtime.NewFromTime(now)
@@ -514,7 +332,6 @@ func (s *Service) AddPoints(ctx context.Context, input *model.PointsTransactionI
 
 // MonthDetail 签到详情
 func (s *Service) MonthDetail(ctx context.Context, input *model.MonthDetailInput) (*model.MonthDetailOutput, error) {
-	// 1. 从redis中分别取出签到bitmap和补签bitmap,分别得到签到日期和补签日期
 	checkinBitmap, retroBitmap, err := s.getMonthBitmap(ctx, input.UserId, input.Year, input.Month)
 	if err != nil {
 		g.Log().Errorf(ctx, "获取年月bitmap失败: %v", err)
@@ -522,18 +339,15 @@ func (s *Service) MonthDetail(ctx context.Context, input *model.MonthDetailInput
 	}
 
 	g.Log().Debugf(ctx, "--> checkinBitmap: %031b retroBitmap:%031b", checkinBitmap, retroBitmap)
-	monthDays := getMonthDays(input.Year, input.Month) // 当月天数
+	monthDays := getMonthDays(input.Year, input.Month)
 	checkinDays := parseBitmap2Days(checkinBitmap, monthDays)
 	retroDays := parseBitmap2Days(retroBitmap, monthDays)
 
-	// 2. 计算连续签到天数
 	bitmap := checkinBitmap | retroBitmap
 	maxConsecutive := calcMaxConsecutiveDays(bitmap, monthDays)
 
-	// 3. 计算剩余补签次数
-	remainRetroTimes := maxRetroTimesPerMonth - len(retroDays) // 用月度补签次数减去已补签天数
+	remainRetroTimes := maxRetroTimesPerMonth - len(retroDays)
 
-	// 4. 计算当天是否签到
 	isCheckedToday, err := s.IsCheckedToday(ctx, input.UserId)
 	if err != nil {
 		g.Log().Errorf(ctx, "查询当天是否签到失败: %v", err)
@@ -550,12 +364,10 @@ func (s *Service) MonthDetail(ctx context.Context, input *model.MonthDetailInput
 }
 
 func (s *Service) IsCheckedToday(ctx context.Context, userId uint64) (bool, error) {
-	// 计算今天的年度索引，然后使用 getbit 判断这一天是否签到
 	now := time.Now()
 	year := now.Year()
 	key := fmt.Sprintf(yearSignKeyFormat, userId, year)
 
-	// 算出“今天是今年第几天”对应的 bit 下标
 	dayOffset := now.YearDay() - 1
 	value, err := s.rc.GetBit(ctx, key, int64(dayOffset)).Result()
 	if err != nil {
@@ -565,11 +377,9 @@ func (s *Service) IsCheckedToday(ctx context.Context, userId uint64) (bool, erro
 	return value == 1, nil
 }
 
-// parseBitmap2Days 根据当月的天数和bitmap, 输出对应的签到/补签日期
 func parseBitmap2Days(bitmap uint64, monthDays int) []int {
 	days := make([]int, 0)
 	for i := 0; i < monthDays; i++ {
-		// 0000000000000000000000000000110
 		if (bitmap & (1 << (monthDays - 1 - i))) != 0 {
 			days = append(days, i+1)
 		}
@@ -577,39 +387,32 @@ func parseBitmap2Days(bitmap uint64, monthDays int) []int {
 	return days
 }
 
-// getMonthBitmap 获取当月 签到bitmap 和 补签的bitmap
 func (s *Service) getMonthBitmap(ctx context.Context, userId uint64, year, month int) (uint64, uint64, error) {
-	// 从用户年度签到记录中取出当月签到 bitmap
 	key := fmt.Sprintf(yearSignKeyFormat, userId, year)
 	firstOfMonthOffset := getFirstOfMonthOffset(year, month)
 	monthDays := getMonthDays(year, month)
-	bitWidthType := fmt.Sprintf("u%d", monthDays) // u30/u31
+	bitWidthType := fmt.Sprintf("u%d", monthDays)
 
 	values, err := s.rc.BitField(ctx, key, "GET", bitWidthType, firstOfMonthOffset).Result()
 	if err != nil {
 		g.Log().Errorf(ctx, "获取用户签到记录到失败: %v", err)
 		return 0, 0, err
 	}
-
 	if len(values) == 0 {
-		values = []int64{0} // 如果没有查询到，则默认为0
+		values = []int64{0}
 	}
 
 	checkinBitmap := uint64(values[0])
 	g.Log().Debugf(ctx, "checkinBitmap: %0b", checkinBitmap)
 
-	// 获取当月补签 bitmap
 	retroKey := fmt.Sprintf(monthRetroKeyFormat, userId, year, month)
-
-	// 去 Redis 里 retroKey 这个补签位图，从第 0 位开始，读出 monthDays（比如 30/31）个 bit，打包成一个整数返回
 	retroValues, err := s.rc.BitField(ctx, retroKey, "GET", bitWidthType, "#0").Result()
 	if err != nil {
 		g.Log().Errorf(ctx, "获取用户补签记录失败: %v", err)
 		return 0, 0, err
 	}
-
 	if len(retroValues) == 0 {
-		retroValues = []int64{0} // 没有查询到，则默认为0
+		retroValues = []int64{0}
 	}
 
 	retroBitmap := uint64(retroValues[0])
@@ -624,12 +427,9 @@ func (s *Service) Retro(ctx context.Context, userId uint64, date time.Time) erro
 	}
 
 	// 2. 执行补签逻辑
-	// 2.1 Redis里 补签的月度bitmap 中设置补签的标识
 	retroKey := fmt.Sprintf(monthRetroKeyFormat, userId, date.Year(), date.Month())
-	retroOffset := date.Day() - 1 // 索引是从0开始的，所以要减1
+	retroOffset := date.Day() - 1
 
-	// 因为 IntCmd 嵌入了 baseCmd，所以 baseCmd 的方法会被“提升”，表现得像是 IntCmd 自己的方法
-	// 写 cmd.Err()等价于 cmd.baseCmd.Err()
 	err := s.rc.SetBit(ctx, retroKey, int64(retroOffset), 1).Err()
 	if err != nil {
 		g.Log().Errorf(ctx, "SetBit 设置补签状态失败: %v", err)
@@ -637,16 +437,19 @@ func (s *Service) Retro(ctx context.Context, userId uint64, date time.Time) erro
 	}
 
 	// 2.2 补签消耗积分、增加积分、增加积分记录
-	// 正常应该把签到服务和积分服务分开，通过消息队列的方式实现事件驱动。
-	// 签到服务负责签到/补签，发出消息；积分服务监听消息，处理积分的增加和扣减逻辑。
 	if err := s.retroWithTransaction(ctx, userId, date); err != nil {
 		// 如果数据库更新失败，则回滚 Redis 中的补签标识
-		err := s.rc.SetBit(ctx, retroKey, int64(retroOffset), 0).Err()
-		if err != nil {
-			g.Log().Errorf(ctx, "SetBit 回滚补签状态失败: %v", err)
+		rerr := s.rc.SetBit(ctx, retroKey, int64(retroOffset), 0).Err()
+		if rerr != nil {
+			g.Log().Errorf(ctx, "SetBit 回滚补签状态失败: %v", rerr)
 			return gerror.NewCode(gcode.CodeInternalError)
 		}
+		// ✅ 修复：事务失败必须把错误返回出去
+		return err
 	}
+
+	// ✅ 新增：补签成功也算活跃用户（用于提醒任务候选集）
+	_ = TouchActiveUser(ctx, userId, time.Now())
 
 	// 3. 计算连续签到日期发放连续签到奖励
 	return s.updateConsecutiveBonus(ctx, userId, date.Year(), int(date.Month()))
@@ -655,7 +458,6 @@ func (s *Service) Retro(ctx context.Context, userId uint64, date time.Time) erro
 // retroWithTransaction 补签逻辑，使用事务保证原子性
 func (s *Service) retroWithTransaction(ctx context.Context, userId uint64, date time.Time) error {
 	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
-		// 1. 查询用户的当前积分，积分不够的不能补签
 		var userPoint entity.UserPoints
 		if err := tx.Model(dao.UserPoints.Table()).
 			Where(dao.UserPoints.Columns().UserId, userId).
@@ -664,7 +466,6 @@ func (s *Service) retroWithTransaction(ctx context.Context, userId uint64, date 
 				g.Log().Errorf(ctx, "查询用户积分失败: %v", err)
 				return err
 			}
-			// 如果是 ErrNoRows（没记录），就手动给一个默认值
 			userPoint = entity.UserPoints{
 				UserId: userId,
 			}
@@ -674,21 +475,18 @@ func (s *Service) retroWithTransaction(ctx context.Context, userId uint64, date 
 			return ErrNoEnoughPoints
 		}
 
-		// 2. 计算积分变化（补签消耗的、每日签到奖励）
 		pointsChange := -defaultRetroCostPoints + defaultDailyPoints
 		nowPoints := userPoint.Points + int64(pointsChange)
-		nowTotalPoints := userPoint.PointsTotal + defaultDailyPoints // 只算得到的积分，不算消费的
+		nowTotalPoints := userPoint.PointsTotal + defaultDailyPoints
 
-		// 3. 积分记录中新增一条补签消耗100积分的记录
 		retroCostRecord := entity.UserPointsTransactions{
 			UserId:          userId,
 			PointsChange:    -defaultRetroCostPoints,
 			TransactionType: int(PointsTransactionTypeRetro),
-			// Description:     PointsTransactionTypeMsgMap[PointsTransactionTypeRetro],
-			Description:    fmt.Sprintf(PointsTransactionTypeMsgMap[PointsTransactionTypeRetro], date.Format(time.DateOnly)),
-			CurrentBalance: userPoint.Points - defaultRetroCostPoints,
-			CreatedAt:      gtime.NewFromTime(time.Now()),
-			UpdatedAt:      gtime.NewFromTime(time.Now()),
+			Description:     fmt.Sprintf(PointsTransactionTypeMsgMap[PointsTransactionTypeRetro], date.Format(time.DateOnly)),
+			CurrentBalance:  userPoint.Points - defaultRetroCostPoints,
+			CreatedAt:       gtime.NewFromTime(time.Now()),
+			UpdatedAt:       gtime.NewFromTime(time.Now()),
 		}
 
 		if _, err := tx.Model(dao.UserPointsTransactions.Table()).Insert(&retroCostRecord); err != nil {
@@ -696,7 +494,6 @@ func (s *Service) retroWithTransaction(ctx context.Context, userId uint64, date 
 			return err
 		}
 
-		// 4. 积分记录中新增每日签到固定得的奖励积分记录
 		checkinBonusRecord := entity.UserPointsTransactions{
 			UserId:          userId,
 			PointsChange:    defaultDailyPoints,
@@ -712,7 +509,6 @@ func (s *Service) retroWithTransaction(ctx context.Context, userId uint64, date 
 			return err
 		}
 
-		// 5. 更新用户积分
 		userPoint.Points = nowPoints
 		userPoint.PointsTotal = nowTotalPoints
 		if _, err := tx.Model(dao.UserPoints.Table()).
@@ -727,17 +523,13 @@ func (s *Service) retroWithTransaction(ctx context.Context, userId uint64, date 
 }
 
 func (s *Service) checkRetroDate(ctx context.Context, userId uint64, date time.Time) error {
-	// 补签日期不能是今天或者未来的日期
 	now := time.Now()
 	if date.Year() > now.Year() ||
 		date.Month() != now.Month() ||
 		(date.Year() == now.Year() && date.YearDay() >= now.YearDay()) {
-		// return errors.New("补签日期无效")
 		return ErrInvalidRetroDate
 	}
 
-	// 补签的日期不能是本月之前的日期
-	// 补签的日期不能是已经签到的日期(签到或者补签过都算)
 	checkinKey := fmt.Sprintf(yearSignKeyFormat, userId, date.Year())
 	yearOffset := date.YearDay() - 1
 	checked, err := s.rc.GetBit(ctx, checkinKey, int64(yearOffset)).Result()
@@ -745,9 +537,7 @@ func (s *Service) checkRetroDate(ctx context.Context, userId uint64, date time.T
 		g.Log().Errorf(ctx, "GetBit 获取当天签到状态失败: %v", err)
 		return err
 	}
-
 	if checked == 1 {
-		// return errors.New("该日期已签到")
 		return ErrInvalidRetroDate
 	}
 
@@ -758,19 +548,15 @@ func (s *Service) checkRetroDate(ctx context.Context, userId uint64, date time.T
 		g.Log().Errorf(ctx, "GetBit 获取当天补签状态失败: %v", err)
 		return err
 	}
-
 	if retroRet == 1 {
 		return ErrInvalidRetroDate
 	}
 
-	// 每个月补签不能超过三次
-	// nil：表示不指定范围（统计整个 key 的所有 bit）
 	retroCount, err := s.rc.BitCount(ctx, retroKey, nil).Result()
 	if err != nil {
 		g.Log().Errorf(ctx, "BitCount 获取补签次数失败: %v", err)
 		return err
 	}
-
 	if retroCount >= maxRetroTimesPerMonth {
 		return ErrRetroNotimes
 	}
