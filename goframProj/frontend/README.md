@@ -1,10 +1,9 @@
 # checkin-h5-app（前后端同级）
 
 本目录下包含：
-- `backend/`：你提供的 GoFrame 后端项目（原样解压）
-- `frontend/`：我基于 prototype.html 开发的 Vue3 + TS + Vite H5 前端
+- `frontend/`：基于 prototype.html 开发的 Vue3 + TS + Vite H5 前端
 
-> 说明：你提供的后端目前只实现了 **注册 / 登录 / 刷新 token / 获取当前用户信息**。  
+> 说明：后端目前只实现了 **注册 / 登录 / 刷新 token / 获取当前用户信息**。  
 > “签到 / 积分 / 补签 / 奖励”等业务接口在后端代码里尚未实现，所以前端为了保证能跑起来，先用 **localStorage** 模拟积分与签到规则；  
 > 一旦后端补齐对应接口，前端只需要把 points store 的本地逻辑替换为真实 API 调用即可。
 
