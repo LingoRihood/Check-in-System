@@ -10,7 +10,9 @@ export default defineConfig({
     }
   },
   server: {
+    host: '0.0.0.0',
     port: 5173,
+    allowedHosts: true, // ✅ 允许所有 Host（仅建议开发时）
     proxy: {
       '/api': {
         // 要和后端的端口对应上

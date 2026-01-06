@@ -25,32 +25,51 @@ export type MonthState = {
   bonusAwarded: Record<string, boolean>
 }
 
+/** ✅ 给“明细左侧图标”用：更细的业务类型（保持你原来那套图标风格） */
+export type PointsBizType = 'checkin' | 'bonus' | 'makeup_cost' | 'other'
+
 export type PointsRecord = {
   id: string
   date: string
   title: string
   points: number
+  /** 获取/消耗 tab 用（你原来已有） */
   type: 'earn' | 'spend'
+  /** ✅ 左侧图标用（新增） */
+  bizType: PointsBizType
+  /** ✅ 可选：如果组件想用后端类型也保留 */
+  transactionType: number
 }
 
 function monthKey(d: dayjs.Dayjs) {
   return d.format('YYYY-MM')
 }
 
-// ✅ 关键修复：显式返回 PointsRecord，避免 type 被 TS 推断成 string
+/**
+ * ✅ 从后端流水映射到前端 PointsRecord
+ * - 保留 type(earn/spend) 用于 tab
+ * - 新增 bizType(checkin/bonus/makeup_cost/other) 用于左侧图标
+ * - 保留 transactionType，方便组件直接用
+ */
 function mapBackendRecord(r: BackendPointsRecord, idx: number): PointsRecord {
   const t = r.transactionTime || ''
   const txType = Number(r.transactionType) || 0
   const delta = Number(r.pointsChange) || 0
+
+  // ✅ 根据 transactionType 映射业务类型（用于图标）
+  let bizType: PointsBizType = 'other'
+  if (txType === 1) bizType = 'checkin'
+  else if (txType === 2) bizType = 'bonus'
+  else if (txType === 3) bizType = 'makeup_cost'
 
   return {
     id: `${t}-${txType}-${delta}-${idx}`,
     date: t ? dayjs(t).format('YYYY-MM-DD') : '',
     title: r.description || '积分变动',
     points: delta,
-    // ✅ 关键：补齐 PointsRecordItem 需要的 type 字段
-    // 规则：>=0 视为获取，<0 视为消耗
-    type: delta >= 0 ? 'earn' : 'spend'
+    type: delta >= 0 ? 'earn' : 'spend',
+    bizType,
+    transactionType: txType
   }
 }
 
@@ -168,7 +187,7 @@ export const usePointsStore = defineStore('points', {
           if (list.length < limit) break
         }
 
-        // ✅ 关键：显式传 idx
+        // ✅ 关键：显式传 idx，保证 id 唯一且 TS 类型正确
         this.backendRecords = all.map((r, idx) => mapBackendRecord(r, idx))
       } catch (e) {
         console.error('[points] refreshBackendPoints failed', e)
